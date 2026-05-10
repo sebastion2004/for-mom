@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>专属祝福</title>
+    <style>
+        body { margin: 0; background: #000000; overflow: hidden; touch-action: none; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        #text-box {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            /* 字体优化：使用楷体/宋体系列，增加优雅古典的唯美感 */
+            font-family: 'STKaiti', 'KaiTi', 'SimSun', 'Noto Serif SC', serif; 
+            text-align: center; pointer-events: none; width: 90vw;
+            opacity: 0; transition: opacity 3s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+        h1 { 
+            font-size: clamp(2.8rem, 9vw, 4.5rem); margin: 0 0 15px 0; 
+            letter-spacing: 8px; font-weight: normal; color: #fff0f5;
+            text-shadow: 0 0 20px rgba(255, 105, 180, 0.6);
+        }
+        p { 
+            font-size: clamp(1.4rem, 4.5vw, 2rem); margin: 0; 
+            letter-spacing: 3px; font-weight: normal; opacity: 0.9;
+            color: #ffb7c5;
+        }
+    </style>
+</head>
+<body>
+    <div id="text-box">
+        <h1>母亲节快乐</h1>
+        <p>娟姐福如东海，寿比南山</p>
+    </div>
+    <canvas id="canvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    let w, h, dpr;
+    let meteors = [], starDustParticles = [];
+    // 移除模糊后，手机端也可轻松带动 250 个粒子
+    const MAX_STARDUST = window.innerWidth < 768 ? 250 : 350; 
+    const CONVERGE_DURATION = 7000; 
+    let animationStartTime = Date.now();
+    let textRevealed = false;
+
+    function init() {
+        dpr = window.devicePixelRatio || 1;
+        w = window.innerWidth;
+        h = window.innerHeight;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        ctx.scale(dpr, dpr);
+    }
+
+    class Meteor {
+        constructor() { this.reset(); }
+        reset() {
+            this.x = Math.random() * w;
+            this.y = Math.random() * h - h;
+            this.len = Math.random() * 80 + 40;
+            this.speed = Math.random() * 4 + 1.5;
+            this.size = Math.random() * 1 + 0.2;
+            this.angle = (Math.PI / 180) * 15;
+        }
+        draw() {
+            ctx.beginPath();
+            let endX = this.x + Math.sin(this.angle) * this.len;
+            let endY = this.y - Math.cos(this.angle) * this.len;
+            let grad = ctx.createLinearGradient(this.x, this.y, endX, endY);
+            grad.addColorStop(0, 'rgba(255,255,255,0.6)');
+            grad.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.strokeStyle = grad; ctx.lineWidth = this.size;
+            ctx.moveTo(this.x, this.y); ctx.lineTo(endX, endY); ctx.stroke();
+            this.y += this.speed; this.x += Math.sin(this.angle) * this.speed;
+            if (this.y - this.len > h || this.x > w + this.len) this.reset();
+        }
+    }
+
+    function getHeartPoint(t) {
+        let x = 16 * Math.pow(Math.sin(t), 3);
+        let y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+        return { x: x, y: -y }; 
+    }
+
+    class StarDust {
+        constructor() {
+            let spawnAngle = Math.random() * Math.PI * 2;
+            let spawnRadius = Math.max(w, h) * (0.8 + Math.random() * 0.5);
+            this.startX = w/2 + Math.cos(spawnAngle) * spawnRadius;
+            this.startY = h/2 + Math.sin(spawnAngle) * spawnRadius;
+            this.t = Math.random() * Math.PI * 2; 
+            this.hue = 280 + (this.t / (Math.PI * 2)) * 60; 
+            this.spinCycles = 2 + Math.random() * 1.5; 
+            this.easeDelay = Math.random() * 0.2; 
+        }
+        
+        update(globalProgress, centerX, centerY, baseScale) {
+            let p = Math.max(0, (globalProgress - this.easeDelay) / (1 - this.easeDelay));
+            p = Math.min(1, p);
+            let ease = 1 - Math.pow(1 - p, 3);
+            let p_base = getHeartPoint(this.t);
+            let targetX = centerX + p_base.x * baseScale;
+            let targetY = centerY + p_base.y * baseScale;
+            let baseX = this.startX + (targetX - this.startX) * ease;
+            let baseY = this.startY + (targetY - this.startY) * ease;
+            let spinAngle = (1 - ease) * Math.PI * 2 * this.spinCycles;
+            let dx = baseX - centerX;
+            let dy = baseY - centerY;
+            
+            this.x = centerX + dx * Math.cos(spinAngle) - dy * Math.sin(spinAngle);
+            this.y = centerY + dx * Math.sin(spinAngle) + dy * Math.cos(spinAngle);
+            let alpha = 0.3 + ease * 0.7;
+            this.color = `hsla(${this.hue}, 100%, 75%, ${alpha})`;
+            // 降低光晕透明度，模拟发光
+            this.glow = `hsla(${this.hue}, 100%, 65%, ${alpha * 0.15})`;
+        }
+        
+        draw() {
+            // 性能优化核心：彻底摒弃 shadowBlur，使用重叠的两个圆模拟光晕效果
+            // 1. 画大半径光晕圈
+            ctx.fillStyle = this.glow;
+            ctx.beginPath(); 
+            ctx.arc(this.x, this.y, 4, 0, Math.PI * 2); 
+            ctx.fill();
+            
+            // 2. 画小半径高亮实体圈
+            ctx.fillStyle = this.color;
+            ctx.beginPath(); 
+            ctx.arc(this.x, this.y, 1.5, 0, Math.PI * 2); 
+            ctx.fill();
+        }
+    }
+
+    init();
+    for (let i = 0; i < 40; i++) meteors.push(new Meteor());
+    for (let i = 0; i < MAX_STARDUST; i++) starDustParticles.push(new StarDust());
+
+    function animate() {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.25)'; 
+        ctx.fillRect(0, 0, w, h);
+        meteors.forEach(m => m.draw());
+
+        let elapsedTime = Date.now() - animationStartTime;
+        let progress = Math.min(elapsedTime / CONVERGE_DURATION, 1);
+
+        let centerX = w / 2;
+        let centerY = h / 2;
+        let isMobile = w < h;
+        let baseScale = isMobile ? w / 30 : Math.min(w, h) / 38;
+
+        starDustParticles.forEach(p => {
+            p.update(progress, centerX, centerY, baseScale);
+            p.draw();
+        });
+
+        if (progress === 1 && !textRevealed) {
+            document.getElementById('text-box').style.opacity = 1;
+            textRevealed = true;
+        }
+
+        requestAnimationFrame(animate);
+    }
+
+    window.addEventListener('resize', () => {
+        init();
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, w, h);
+    });
+    
+    animate();
+</script>
+</body>
+</html>
